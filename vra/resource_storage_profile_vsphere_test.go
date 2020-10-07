@@ -1,0 +1,106 @@
+package vra
+
+import (
+	"fmt"
+	"os"
+	"testing"
+
+	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/terraform"
+	"github.com/vmware/vra-sdk-go/pkg/client/cloud_account"
+	"github.com/vmware/vra-sdk-go/pkg/client/storage_profile"
+)
+
+func TestAccVRAStorageProfileVsphereBasic(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheckStorageProfileVsphere(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckVRAStorageProfileVsphereDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCheckVRAStorageProfileVsphereConfig(),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVRAStorageProfileVsphereExists("vra_storage_profile_vsphere.my-storage-profile-vsphere"),
+					resource.TestCheckResourceAttr(
+						"vra_storage_profile_vsphere.my-storage-profile-vsphere", "name", "my-vra-storage-profile-vsphere"),
+					resource.TestCheckResourceAttr(
+						"vra_storage_profile_vsphere.my-storage-profile-vsphere", "description", "my storage profile vsphere"),
+					resource.TestCheckResourceAttr(
+						"vra_storage_profile_vsphere.my-storage-profile-vsphere", "default_item", "true"),
+					resource.TestCheckResourceAttr(
+						"vra_storage_profile_vsphere.my-storage-profile-vsphere", "disk_mode", "independent-persistent"),
+					resource.TestCheckResourceAttr(
+						"vra_storage_profile_vsphere.my-storage-profile-vsphere", "limit_iops", "1000"),
+					resource.TestCheckResourceAttr(
+						"vra_storage_profile_vsphere.my-storage-profile-vsphere", "data_type", "standard"),
+				),
+			},
+		},
+	})
+}
+
+func testAccCheckVRAStorageProfileVsphereExists(n string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[n]
+		if !ok {
+			return fmt.Errorf("not found: %s", n)
+		}
+
+		if rs.Primary.ID == "" {
+			return fmt.Errorf("no storage profile vsphere ID is set")
+		}
+
+		return nil
+	}
+}
+
+func testAccCheckVRAStorageProfileVsphereDestroy(s *terraform.State) error {
+	apiClient := testAccProviderVRA.Meta().(*Client).apiClient
+
+	for _, rs := range s.RootModule().Resources {
+		if rs.Type == "vra_cloud_account_vsphere" {
+			_, err := apiClient.CloudAccount.GetVSphereCloudAccount(cloud_account.NewGetVSphereCloudAccountParams().WithID(rs.Primary.ID))
+			if err == nil {
+				return fmt.Errorf("Resource 'vra_cloud_account_vsphere' still exists with id %s", rs.Primary.ID)
+			}
+		}
+		if rs.Type == "vra_storage_profile_vsphere" {
+			_, err := apiClient.StorageProfile.GetVSphereStorageProfile(storage_profile.NewGetVSphereStorageProfileParams().WithID(rs.Primary.ID))
+			if err == nil {
+				return fmt.Errorf("Resource 'vra_storage_profile_vsphere' still exists with id %s", rs.Primary.ID)
+			}
+		}
+	}
+
+	return nil
+}
+
+func testAccCheckVRAStorageProfileVsphereConfig() string {
+	// Need valid credentials since this is creating a real cloud account
+	username := os.Getenv("VRA_VSPHERE_USERNAME")
+	password := os.Getenv("VRA_VSPHERE_PASSWORD")
+	hostname := os.Getenv("VRA_VSPHERE_HOSTNAME")
+	region := os.Getenv("VRA_ARM_REGION")
+	return fmt.Sprintf(`
+	resource "vra_cloud_account_vsphere" "my-cloud-account" {
+	name = "my-cloud-account"
+	description = "test cloud account"
+	username = "%s"
+	password = "%s"
+	hostname = "%s"
+	regions = ["%s"]
+ }
+
+data "vra_region" "my-region" {
+    cloud_account_id = "${vra_cloud_account_vsphere.my-cloud-account.id}"
+    region = "%s"
+}
+resource "vra_storage_profile_vsphere" "my-storage-profile-vsphere" {
+	name = "my-vra-storage-profile-vsphere"
+	description = "my storage profile vsphere"
+	region_id = "${data.vra_region.my-region.id}"
+	default_item = true
+	disk_mode = "independent-persistent"
+	limit_iops = "1000"
+}`, username, password, hostname, region, region)
+}
